@@ -1,0 +1,124 @@
+---
+import BaseLayout from './BaseLayout.astro'
+import { categories, type CategoryId } from '../config/categories'
+
+interface Props {
+  title: string
+  description: string
+  pubDate: Date
+  updatedDate?: Date
+  category: CategoryId
+  tags: string[]
+}
+
+const { title, description, pubDate, updatedDate, category, tags } = Astro.props
+const formatDate = (date: Date) => date.toLocaleDateString('zh-CN', {
+  year: 'numeric',
+  month: 'long',
+  day: 'numeric'
+})
+---
+
+<BaseLayout title={title} description={description}>
+  <article class="post-shell">
+    <header class="post-header">
+      <a class="back-link" href="/blog/">← 返回文章列表</a>
+      <h1>{title}</h1>
+      <p class="lead">{description}</p>
+      <div class="post-meta">
+        <time datetime={pubDate.toISOString()}>{formatDate(pubDate)}</time>
+        {updatedDate && <span>更新于 {formatDate(updatedDate)}</span>}
+        <a class="category" href={`/categories/${category}/`}>{categories[category].label}</a>
+        {tags.map((tag) => <span class="tag">{tag}</span>)}
+      </div>
+    </header>
+    <div class="prose">
+      <slot />
+    </div>
+  </article>
+
+  <script>
+    const diagrams = Array.from(document.querySelectorAll<HTMLElement>('pre > code.language-mermaid'))
+      .map((code) => {
+        const container = code.parentElement
+        if (!container) return null
+
+        container.className = 'mermaid'
+        container.textContent = code.textContent
+        return container
+      })
+      .filter((node): node is HTMLElement => node !== null)
+
+    if (diagrams.length > 0) {
+      const { default: mermaid } = await import('mermaid')
+
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'neutral'
+      })
+      await mermaid.run({ nodes: diagrams })
+    }
+  </script>
+</BaseLayout>
+
+<style>
+  .post-shell {
+    width: min(100% - 2rem, var(--article-width));
+    margin-inline: auto;
+    padding: clamp(3rem, 8vw, 6rem) 0 5rem;
+  }
+
+  .post-header {
+    padding-bottom: 2rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .back-link {
+    color: var(--accent);
+    font-size: 0.9rem;
+    font-weight: 650;
+    text-decoration: none;
+  }
+
+  h1 {
+    margin: 1.2rem 0 0.8rem;
+    font-size: clamp(2.3rem, 8vw, 4.2rem);
+    line-height: 1.08;
+    letter-spacing: -0.055em;
+  }
+
+  .lead {
+    max-width: 42rem;
+    margin: 0;
+    color: var(--text-muted);
+    font-size: 1.15rem;
+  }
+
+  .post-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem;
+    margin-top: 1.4rem;
+    color: var(--text-muted);
+    font-size: 0.86rem;
+  }
+
+  .tag {
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.15rem 0.55rem;
+    background: var(--surface);
+  }
+
+  .category {
+    color: var(--accent);
+    font-weight: 650;
+    text-decoration: none;
+  }
+
+  .prose {
+    padding-top: 2rem;
+  }
+</style>

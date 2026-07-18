@@ -1,0 +1,42 @@
+<footer>
+  <div class="footer-inner">
+    <p>© {new Date().getFullYear()} masp</p>
+    <div class="footer-links">
+      <a href="/rss.xml">RSS</a>
+      <a href="https://github.com/mashuiping" rel="me">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<style>
+  footer {
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+  }
+
+  .footer-inner {
+    display: flex;
+    width: min(100% - 2rem, var(--content-width));
+    min-height: 6rem;
+    margin-inline: auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    color: var(--text-muted);
+    font-size: 0.9rem;
+  }
+
+  .footer-links {
+    display: flex;
+    gap: 1rem;
+  }
+
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  a:hover {
+    color: var(--accent);
+  }
+</style>

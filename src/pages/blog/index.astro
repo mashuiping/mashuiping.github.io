@@ -1,0 +1,74 @@
+---
+import { getCollection } from 'astro:content'
+import BaseLayout from '../../layouts/BaseLayout.astro'
+import PostCard from '../../components/PostCard.astro'
+import CategoryNav from '../../components/CategoryNav.astro'
+import { categoryIds } from '../../config/categories'
+
+const posts = (await getCollection('blog', ({ data }) => !data.draft))
+  .sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf())
+
+const categoryStats = categoryIds
+  .map((id) => ({ id, count: posts.filter((post) => post.data.category === id).length }))
+  .filter(({ count }) => count > 0)
+---
+
+<BaseLayout title="文章" description="技术实践、学习笔记与思考">
+  <section class="page-shell">
+    <header>
+      <p>WRITING</p>
+      <h1>文章</h1>
+      <div class="heading-row">
+        <span>技术实践、学习笔记与思考。</span>
+        <a href="/rss.xml">订阅 RSS →</a>
+      </div>
+    </header>
+    <CategoryNav items={categoryStats} />
+    <div class="post-list">
+      {posts.map((post) => <PostCard post={post} />)}
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .page-shell {
+    width: min(100% - 2rem, var(--content-width));
+    margin-inline: auto;
+    padding: clamp(4rem, 10vw, 7rem) 0 5rem;
+  }
+
+  header {
+    padding-bottom: 3rem;
+  }
+
+  header > p {
+    margin: 0 0 1rem;
+    color: var(--accent);
+    font-family: ui-monospace, monospace;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: clamp(3rem, 10vw, 6rem);
+    letter-spacing: -0.065em;
+  }
+
+  .heading-row {
+    display: flex;
+    margin-top: 1rem;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    color: var(--text-muted);
+  }
+
+  .heading-row a {
+    color: var(--accent);
+    font-size: 0.9rem;
+    font-weight: 650;
+    text-decoration: none;
+  }
+</style>

@@ -1,0 +1,145 @@
+---
+import { getCollection } from 'astro:content'
+import BaseLayout from '../layouts/BaseLayout.astro'
+import PostCard from '../components/PostCard.astro'
+import CategoryNav from '../components/CategoryNav.astro'
+import { categoryIds } from '../config/categories'
+
+const allPosts = (await getCollection('blog', ({ data }) => !data.draft))
+  .sort((a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf())
+const posts = allPosts.slice(0, 3)
+const categoryStats = categoryIds
+  .map((id) => ({ id, count: allPosts.filter((post) => post.data.category === id).length }))
+  .filter(({ count }) => count > 0)
+---
+
+<BaseLayout>
+  <section class="hero">
+    <p class="eyebrow">MASP · PERSONAL NOTES</p>
+    <h1>理解复杂，<br /><span>写下清晰。</span></h1>
+    <p class="intro">这里记录技术实践、学习过程，以及我对软件与系统的思考。</p>
+    <div class="hero-actions">
+      <a class="primary" href="/blog/">浏览文章</a>
+      <a class="secondary" href="https://github.com/mashuiping">GitHub ↗</a>
+    </div>
+  </section>
+
+  <section class="latest" aria-labelledby="latest-title">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">LATEST WRITING</p>
+        <h2 id="latest-title">最近文章</h2>
+      </div>
+      <a href="/blog/">查看全部 →</a>
+    </div>
+    <div class="category-filter">
+      <CategoryNav items={categoryStats} />
+    </div>
+    <div class="post-list">
+      {posts.map((post) => <PostCard post={post} />)}
+    </div>
+  </section>
+</BaseLayout>
+
+<style>
+  .hero,
+  .latest {
+    width: min(100% - 2rem, var(--content-width));
+    margin-inline: auto;
+  }
+
+  .hero {
+    padding: clamp(5rem, 14vw, 10rem) 0 clamp(5rem, 12vw, 8rem);
+  }
+
+  .eyebrow {
+    margin: 0 0 1.25rem;
+    color: var(--accent);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 0.74rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+  }
+
+  h1 {
+    max-width: 12ch;
+    margin: 0;
+    font-size: clamp(3.5rem, 12vw, 7.8rem);
+    line-height: 0.94;
+    letter-spacing: -0.075em;
+  }
+
+  h1 span {
+    color: var(--accent);
+  }
+
+  .intro {
+    max-width: 37rem;
+    margin: 2rem 0 0;
+    color: var(--text-muted);
+    font-size: clamp(1.05rem, 2vw, 1.25rem);
+  }
+
+  .hero-actions {
+    display: flex;
+    flex-wrap: wrap;
+    margin-top: 2rem;
+    gap: 0.8rem;
+  }
+
+  .hero-actions a {
+    border-radius: 0.7rem;
+    padding: 0.72rem 1rem;
+    font-size: 0.92rem;
+    font-weight: 700;
+    text-decoration: none;
+  }
+
+  .primary {
+    color: white;
+    background: var(--accent);
+  }
+
+  .primary:hover {
+    background: var(--accent-strong);
+  }
+
+  .secondary {
+    border: 1px solid var(--border);
+    color: var(--text-strong);
+    background: var(--surface);
+  }
+
+  .latest {
+    padding-bottom: 5rem;
+  }
+
+  .section-heading {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+
+  .section-heading .eyebrow {
+    margin-bottom: 0.6rem;
+  }
+
+  h2 {
+    margin: 0;
+    font-size: clamp(2rem, 5vw, 3rem);
+    letter-spacing: -0.045em;
+  }
+
+  .section-heading > a {
+    padding-bottom: 0.25rem;
+    color: var(--accent);
+    font-size: 0.9rem;
+    font-weight: 650;
+    text-decoration: none;
+  }
+
+  .category-filter {
+    margin-top: 2rem;
+  }
+</style>

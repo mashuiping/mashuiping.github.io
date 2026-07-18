@@ -1,0 +1,112 @@
+---
+const pathname = Astro.url.pathname
+
+const links = [
+  { href: '/', label: '首页' },
+  { href: '/blog/', label: '文章' },
+  { href: '/about/', label: '关于' }
+]
+---
+
+<header class="site-header">
+  <div class="header-inner">
+    <a class="brand" href="/" aria-label="masp 的博客首页">
+      <span class="brand-mark" aria-hidden="true">M</span>
+      <span>masp</span>
+    </a>
+    <nav aria-label="主导航">
+      <ul>
+        {links.map((link) => (
+          <li>
+            <a
+              href={link.href}
+              aria-current={pathname === link.href || (link.href !== '/' && pathname.startsWith(link.href)) ? 'page' : undefined}
+            >
+              {link.label}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<style>
+  .site-header {
+    position: sticky;
+    z-index: 10;
+    top: 0;
+    border-bottom: 1px solid var(--border);
+    background: color-mix(in srgb, var(--background) 88%, transparent);
+    backdrop-filter: blur(14px);
+  }
+
+  .header-inner {
+    display: flex;
+    width: min(100% - 2rem, var(--content-width));
+    min-height: 4.25rem;
+    margin-inline: auto;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1.5rem;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.7rem;
+    color: var(--text-strong);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    text-decoration: none;
+  }
+
+  .brand-mark {
+    display: grid;
+    width: 2rem;
+    height: 2rem;
+    place-items: center;
+    border-radius: 0.65rem;
+    color: white;
+    background: var(--accent);
+    font-family: ui-monospace, monospace;
+    font-size: 0.9rem;
+  }
+
+  ul {
+    display: flex;
+    margin: 0;
+    padding: 0;
+    gap: 0.25rem;
+    list-style: none;
+  }
+
+  nav a {
+    display: block;
+    border-radius: 0.55rem;
+    padding: 0.45rem 0.75rem;
+    color: var(--text-muted);
+    font-size: 0.94rem;
+    text-decoration: none;
+  }
+
+  nav a:hover,
+  nav a[aria-current='page'] {
+    color: var(--text-strong);
+    background: var(--surface);
+  }
+
+  @media (max-width: 520px) {
+    .header-inner {
+      width: min(100% - 1.25rem, var(--content-width));
+    }
+
+    .brand > span:last-child {
+      display: none;
+    }
+
+    nav a {
+      padding-inline: 0.6rem;
+    }
+  }
+</style>
