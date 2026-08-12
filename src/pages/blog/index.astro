@@ -14,61 +14,36 @@ const categoryStats = categoryIds
 ---
 
 <BaseLayout title="文章" description="技术实践、学习笔记与思考">
-  <section class="page-shell">
-    <header>
-      <p>WRITING</p>
+  <div class="page">
+    <header class="page-header">
       <h1>文章</h1>
-      <div class="heading-row">
-        <span>技术实践、学习笔记与思考。</span>
-        <a href="/rss.xml">订阅 RSS →</a>
-      </div>
+      <p class="sub">技术实践、学习笔记与思考。<a href="/rss.xml">订阅 RSS</a></p>
     </header>
     <CategoryNav items={categoryStats} />
     <div class="post-list">
       {posts.map((post) => <PostCard post={post} />)}
     </div>
-  </section>
+  </div>
 </BaseLayout>
 
 <style>
-  .page-shell {
-    width: min(100% - 2rem, var(--content-width));
-    margin-inline: auto;
-    padding: clamp(4rem, 10vw, 7rem) 0 5rem;
-  }
-
-  header {
-    padding-bottom: 3rem;
-  }
-
-  header > p {
-    margin: 0 0 1rem;
-    color: var(--accent);
-    font-family: ui-monospace, monospace;
-    font-size: 0.74rem;
-    font-weight: 700;
-    letter-spacing: 0.14em;
+  .page-header {
+    margin-bottom: 1.75rem;
   }
 
   h1 {
+    margin: 0 0 0.5rem;
+    font-size: 1.7rem;
+  }
+
+  .sub {
     margin: 0;
-    font-size: clamp(3rem, 10vw, 6rem);
-    letter-spacing: -0.065em;
+    color: var(--muted);
+    font-size: 0.95rem;
   }
 
-  .heading-row {
-    display: flex;
-    margin-top: 1rem;
-    align-items: center;
-    justify-content: space-between;
-    gap: 1rem;
-    color: var(--text-muted);
-  }
-
-  .heading-row a {
-    color: var(--accent);
-    font-size: 0.9rem;
-    font-weight: 650;
-    text-decoration: none;
+  .post-list {
+    margin-top: 1.5rem;
+    border-top: 1px solid var(--line);
   }
 </style>

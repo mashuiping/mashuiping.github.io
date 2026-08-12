@@ -3,77 +3,23 @@ import BaseLayout from '../layouts/BaseLayout.astro'
 ---
 
 <BaseLayout title="关于" description="关于 masp">
-  <section class="about-shell">
-    <p class="eyebrow">ABOUT</p>
+  <div class="page">
     <h1>关于我</h1>
-    <div class="about-grid">
-      <p class="lead">你好，我是 masp。这里是我的个人博客。</p>
-      <div class="body-copy">
-        <p>我在这里记录技术实践、学习过程，以及对软件与系统的思考。</p>
-        <p>写作对我而言，是把模糊的理解变得清晰，也是让经验可以被重新使用。如果这些内容恰好也能帮到你，那就更好了。</p>
-        <a href="https://github.com/mashuiping">在 GitHub 上找到我 →</a>
-      </div>
-    </div>
-  </section>
+    <p>你好，我是 masp。这里是我的个人博客。</p>
+    <p>我在这里记录技术实践、学习过程，以及对软件与系统的思考。</p>
+    <p>写作对我而言，是把模糊的理解变得清晰，也是让经验可以被重新使用。如果这些内容恰好也能帮到你，那就更好了。</p>
+    <p><a href="https://github.com/mashuiping">在 GitHub 上找到我</a></p>
+  </div>
 </BaseLayout>
 
 <style>
-  .about-shell {
-    width: min(100% - 2rem, var(--content-width));
-    min-height: 65vh;
-    margin-inline: auto;
-    padding: clamp(4rem, 12vw, 8rem) 0 5rem;
-  }
-
-  .eyebrow {
-    margin: 0 0 1rem;
-    color: var(--accent);
-    font-family: ui-monospace, monospace;
-    font-size: 0.74rem;
-    font-weight: 700;
-    letter-spacing: 0.14em;
-  }
-
   h1 {
-    margin: 0;
-    font-size: clamp(3rem, 10vw, 6rem);
-    letter-spacing: -0.065em;
+    margin: 0 0 1.25rem;
+    font-size: 1.7rem;
   }
 
-  .about-grid {
-    display: grid;
-    margin-top: clamp(3rem, 8vw, 6rem);
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: clamp(2rem, 8vw, 7rem);
-  }
-
-  .lead {
-    margin: 0;
-    color: var(--text-strong);
-    font-size: clamp(1.5rem, 4vw, 2.2rem);
-    line-height: 1.35;
-    letter-spacing: -0.035em;
-  }
-
-  .body-copy {
-    color: var(--text-muted);
-  }
-
-  .body-copy p:first-child {
-    margin-top: 0;
-  }
-
-  .body-copy a {
-    display: inline-block;
-    margin-top: 1rem;
-    color: var(--accent);
-    font-weight: 650;
-    text-decoration: none;
-  }
-
-  @media (max-width: 700px) {
-    .about-grid {
-      grid-template-columns: 1fr;
-    }
+  p {
+    margin-block: 1rem;
+    color: var(--fg);
   }
 </style>

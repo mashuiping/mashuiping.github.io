@@ -11,8 +11,8 @@ const links = [
 <header class="site-header">
   <div class="header-inner">
     <a class="brand" href="/" aria-label="masp 的博客首页">
-      <span class="brand-mark" aria-hidden="true">M</span>
-      <span>masp</span>
+      <span class="brand-mark" aria-hidden="true"></span>
+      masp<span class="brand-note">/ notes</span>
     </a>
     <nav aria-label="主导航">
       <ul>
@@ -36,15 +36,16 @@ const links = [
     position: sticky;
     z-index: 10;
     top: 0;
-    border-bottom: 1px solid var(--border);
-    background: color-mix(in srgb, var(--background) 88%, transparent);
+    border-bottom: 1px solid var(--line);
+    background: rgba(23, 23, 20, 0.88);
     backdrop-filter: blur(14px);
+    font-family: var(--sans);
   }
 
   .header-inner {
     display: flex;
-    width: min(100% - 2rem, var(--content-width));
-    min-height: 4.25rem;
+    width: min(100% - 2.5rem, var(--wide-width));
+    min-height: 3.4rem;
     margin-inline: auto;
     align-items: center;
     justify-content: space-between;
@@ -54,23 +55,29 @@ const links = [
   .brand {
     display: inline-flex;
     align-items: center;
-    gap: 0.7rem;
-    color: var(--text-strong);
+    gap: 0.55rem;
+    color: var(--fg-strong);
+    font-size: 0.92rem;
     font-weight: 700;
-    letter-spacing: -0.02em;
+    text-decoration: none;
+  }
+
+  .brand:hover {
     text-decoration: none;
   }
 
   .brand-mark {
-    display: grid;
-    width: 2rem;
-    height: 2rem;
-    place-items: center;
-    border-radius: 0.65rem;
-    color: white;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
     background: var(--accent);
-    font-family: ui-monospace, monospace;
-    font-size: 0.9rem;
+    box-shadow: 0 0 0 4px rgba(255, 118, 88, 0.18);
+  }
+
+  .brand-note {
+    margin-left: 0.15rem;
+    color: var(--muted);
+    font-weight: 450;
   }
 
   ul {
@@ -83,30 +90,27 @@ const links = [
 
   nav a {
     display: block;
-    border-radius: 0.55rem;
-    padding: 0.45rem 0.75rem;
-    color: var(--text-muted);
-    font-size: 0.94rem;
+    border-radius: 4px;
+    padding: 0.3rem 0.7rem;
+    color: var(--muted);
+    font-size: 0.88rem;
     text-decoration: none;
   }
 
-  nav a:hover,
+  nav a:hover {
+    color: var(--fg-strong);
+    background: var(--bg3);
+    text-decoration: none;
+  }
+
   nav a[aria-current='page'] {
-    color: var(--text-strong);
-    background: var(--surface);
+    color: var(--accent-bright);
+    background: var(--bg3);
   }
 
   @media (max-width: 520px) {
-    .header-inner {
-      width: min(100% - 1.25rem, var(--content-width));
-    }
-
-    .brand > span:last-child {
+    .brand-note {
       display: none;
-    }
-
-    nav a {
-      padding-inline: 0.6rem;
     }
   }
 </style>

@@ -32,48 +32,36 @@ const current = categories[category]
 ---
 
 <BaseLayout title={current.label} description={current.description}>
-  <section class="page-shell">
-    <header>
-      <p>CATEGORY</p>
+  <div class="page">
+    <header class="page-header">
       <h1>{current.label}</h1>
-      <span>{current.description}</span>
+      <p class="sub">{current.description}</p>
     </header>
     <CategoryNav items={stats} active={category} />
     <div class="post-list">
       {posts.map((post) => <PostCard post={post} />)}
     </div>
-  </section>
+  </div>
 </BaseLayout>
 
 <style>
-  .page-shell {
-    width: min(100% - 2rem, var(--content-width));
-    margin-inline: auto;
-    padding: clamp(4rem, 10vw, 7rem) 0 5rem;
-  }
-
-  header {
-    padding-bottom: 3rem;
-  }
-
-  header > p {
-    margin: 0 0 1rem;
-    color: var(--accent);
-    font-family: ui-monospace, monospace;
-    font-size: 0.74rem;
-    font-weight: 700;
-    letter-spacing: 0.14em;
+  .page-header {
+    margin-bottom: 1.75rem;
   }
 
   h1 {
-    margin: 0;
-    font-size: clamp(3rem, 10vw, 6rem);
-    letter-spacing: -0.065em;
+    margin: 0 0 0.5rem;
+    font-size: 1.7rem;
   }
 
-  header > span {
-    display: block;
-    margin-top: 1rem;
-    color: var(--text-muted);
+  .sub {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.95rem;
+  }
+
+  .post-list {
+    margin-top: 1.5rem;
+    border-top: 1px solid var(--line);
   }
 </style>

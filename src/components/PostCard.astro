@@ -7,34 +7,63 @@ interface Props {
 }
 
 const { post } = Astro.props
-const formattedDate = post.data.pubDate.toLocaleDateString('zh-CN', {
-  year: 'numeric',
-  month: 'long',
-  day: 'numeric'
-})
+const isoDate = post.data.pubDate.toISOString().slice(0, 10)
 ---
 
 <article>
-  <div class="post-meta">
-    <time datetime={post.data.pubDate.toISOString()}>{formattedDate}</time>
-    <span aria-hidden="true">·</span>
-    <a class="category" href={`/categories/${post.data.category}/`}>
-      {categories[post.data.category].label}
-    </a>
-    {post.data.tags.length > 0 && <span aria-hidden="true">·</span>}
-    {post.data.tags.map((tag) => <span>{tag}</span>)}
+  <div class="post-head">
+    <h2><a href={`/blog/${post.id}/`}>{post.data.title}</a></h2>
+    <time datetime={post.data.pubDate.toISOString()}>{isoDate}</time>
   </div>
-  <h2><a href={`/blog/${post.id}/`}>{post.data.title}</a></h2>
-  <p>{post.data.description}</p>
-  <a class="read-more" href={`/blog/${post.id}/`} aria-label={`阅读《${post.data.title}》`}>
-    阅读文章 <span aria-hidden="true">→</span>
-  </a>
+  <p class="description">{post.data.description}</p>
+  <p class="post-meta">
+    <a class="category" href={`/categories/${post.data.category}/`}>{categories[post.data.category].label}</a>
+    {post.data.tags.slice(0, 4).map((tag) => <span class="tag">{tag}</span>)}
+  </p>
 </article>
 
 <style>
   article {
-    padding-block: 2rem;
-    border-top: 1px solid var(--border);
+    padding-block: 1.5rem;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .post-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 1.25rem;
+  }
+
+  h2 {
+    margin: 0;
+    font-size: 1.08rem;
+    font-weight: 600;
+    line-height: 1.45;
+  }
+
+  h2 a {
+    color: var(--fg-strong);
+    text-decoration: none;
+  }
+
+  h2 a:hover {
+    color: var(--accent-bright);
+    text-decoration: none;
+  }
+
+  time {
+    flex-shrink: 0;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+  }
+
+  .description {
+    margin: 0.45rem 0 0;
+    color: var(--muted);
+    font-size: 0.92rem;
+    line-height: 1.7;
   }
 
   .post-meta {
@@ -42,13 +71,13 @@ const formattedDate = post.data.pubDate.toLocaleDateString('zh-CN', {
     flex-wrap: wrap;
     align-items: center;
     gap: 0.45rem;
-    color: var(--text-muted);
-    font-size: 0.86rem;
+    margin: 0.7rem 0 0;
+    font-family: var(--sans);
+    font-size: 0.76rem;
   }
 
   .category {
-    color: var(--accent);
-    font-weight: 650;
+    color: var(--accent-bright);
     text-decoration: none;
   }
 
@@ -57,34 +86,18 @@ const formattedDate = post.data.pubDate.toLocaleDateString('zh-CN', {
     text-underline-offset: 0.2em;
   }
 
-  h2 {
-    margin: 0.65rem 0 0.6rem;
-    font-size: clamp(1.35rem, 3vw, 1.7rem);
-    letter-spacing: -0.03em;
+  .tag {
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.08rem 0.5rem;
+    color: var(--muted);
+    background: var(--bg2);
   }
 
-  h2 a {
-    color: var(--text-strong);
-    text-decoration: none;
-  }
-
-  h2 a:hover {
-    color: var(--accent);
-  }
-
-  p {
-    max-width: 42rem;
-    margin: 0;
-    color: var(--text-muted);
-  }
-
-  .read-more {
-    display: inline-flex;
-    margin-top: 1rem;
-    gap: 0.35rem;
-    color: var(--accent);
-    font-size: 0.92rem;
-    font-weight: 650;
-    text-decoration: none;
+  @media (max-width: 560px) {
+    .post-head {
+      flex-direction: column;
+      gap: 0.2rem;
+    }
   }
 </style>

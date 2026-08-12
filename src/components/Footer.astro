@@ -11,32 +11,39 @@
 <style>
   footer {
     margin-top: auto;
-    border-top: 1px solid var(--border);
+    border-top: 1px solid var(--line);
+    background: var(--bg2);
+    font-family: var(--sans);
   }
 
   .footer-inner {
     display: flex;
-    width: min(100% - 2rem, var(--content-width));
-    min-height: 6rem;
+    width: min(100% - 2.5rem, var(--wide-width));
     margin-inline: auto;
+    padding-block: 1.1rem;
     align-items: center;
     justify-content: space-between;
     gap: 1rem;
-    color: var(--text-muted);
-    font-size: 0.9rem;
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
+
+  .footer-inner p {
+    margin: 0;
   }
 
   .footer-links {
     display: flex;
-    gap: 1rem;
+    gap: 1.1rem;
   }
 
   a {
-    color: inherit;
+    color: var(--muted);
     text-decoration: none;
   }
 
   a:hover {
-    color: var(--accent);
+    color: var(--accent-bright);
+    text-decoration: none;
   }
 </style>
