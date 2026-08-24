@@ -1,7 +1,7 @@
 ---
 title: DSpark 在 vLLM Ascend V1 中怎么跑：从 Target Forward 到动态验证
 description: 沿一次 speculative decode step 追踪 vLLM 与 vLLM Ascend 的 DSpark V1 实现，解释 context KV、并行 query block、Markov 串行采样和 confidence 动态验证如何接在一起。
-pubDate: 2026-08-22
+pubDate: 2026-08-22T12:00:00+08:00
 updatedDate: 2026-08-22
 category: ai-infra
 tags:
