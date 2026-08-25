@@ -1,5 +1,5 @@
 ---
-title: 同样是 DSpark：V1 Proposer 与 MRV2 Speculator 到底有什么不同？
+title: DSpark 在 V1 与 MRV2 中的实现差异
 description: 沿同一次 DSpark decode 对齐 vLLM Ascend V1 与 Model Runner V2，比较谁组织输入、维护状态、构造 attention metadata、调用 draft model，并给出逐 Tensor 排错顺序。
 pubDate: 2026-08-24T20:00:00+08:00
 updatedDate: 2026-08-24
@@ -13,7 +13,7 @@ tags:
 draft: false
 ---
 
-本文讨论的并不只是“V1 叫 Proposer，MRV2 叫 Speculator”这一命名差异，而是三个更具体的问题：
+从 V1 迁移到 Model Runner V2（MRV2）后，DSpark 的入口由 `Proposer` 变成了 `Speculator`。类名变化背后，Runner、speculator 与 Ascend adapter 的职责也随之调整。本文结合两套实现回答三个问题：
 
 - 同一次 DSpark decode，两边分别是谁把 target 输出整理成 draft 输入？
 - `positions`、block table、slot mapping、attention metadata、target hidden states 和 draft KV 分别归谁？
@@ -28,52 +28,34 @@ vLLM Ascend: main @ b4b04c5eb
 
 这里的 MRV2 指 vLLM 当前的 GPU Model Runner V2 架构，以及 vLLM Ascend 在它上面提供的 NPU adapter。V1 则专指 `vllm_ascend/worker/model_runner_v1.py` 与 `AscendDSparkProposer` 这条 Ascend 路径。
 
-先给结论：**V1 把 DSpark orchestration 大量放在 Ascend Proposer 内；MRV2 把通用 DSpark orchestration、状态容器和 draft 算法上移到了 upstream vLLM，Ascend Speculator 只保留 NPU 必需的适配。** 因此 MRV2 不是把 `Proposer` 重命名为 `Speculator`，而是重新划分了 Runner、upstream speculator 和硬件 adapter 的职责。
+源码对比可以看到：**V1 的 DSpark orchestration 主要位于 Ascend Proposer；MRV2 将通用 orchestration、状态容器和 draft 算法放到了 upstream vLLM，Ascend Speculator 保留 NPU 相关的适配。** 这次变化重新划分了 Runner、upstream speculator 和硬件 adapter 的职责。
 
 ## 一、先对齐两条核心调用链
 
 ```mermaid
-flowchart LR
-  subgraph V1["V1：Ascend 自己组织 DSpark proposal"]
-    direction TB
-    V1R["NPUModelRunner.sample_tokens"]
-    V1P["NPUModelRunner.propose_draft_token_ids"]
-    V1A["AscendDSparkProposer._propose"]
-    V1I["set_inputs_first_pass<br/>展开 anchor / MASK、position、slot"]
-    V1K["precompute_and_store_context_kv<br/>写 draft context KV"]
-    V1M["DSpark draft model forward<br/>+ Markov sequential sampling"]
-    V1O["draft_token_ids"]
-    V1R --> V1P --> V1A --> V1I --> V1K --> V1M --> V1O
-  end
+%%{init: {"flowchart": {"nodeSpacing": 56, "rankSpacing": 30}}}%%
+flowchart TB
+  V1H["V1：Ascend Proposer"] ~~~ V2H["MRV2：upstream Speculator"]
+  V1A["Runner 筛选 target 输出"] ~~~ V2A["Runner 提供 InputBatch 与 BlockTables"]
+  V1B["Proposer 组织 draft 输入<br/>与 attention metadata"] ~~~ V2B["upstream Speculator 组织 draft 输入<br/>与 attention metadata"]
+  V1C["预写 draft context KV"] ~~~ V2C["预写 draft context KV"]
+  V1D["draft forward 与 Markov 采样"] ~~~ V2D["draft forward 与 Markov 采样"]
 
-  subgraph V2["MRV2：upstream 主体 + Ascend adapter"]
-    direction TB
-    V2R["upstream GPUModelRunner.sample_tokens"]
-    V2A["AscendDSparkSpeculator.propose"]
-    V2U["upstream DSparkSpeculator.propose"]
-    V2I["upstream prepare_dflash_inputs<br/>展开 anchor / MASK、position、slot"]
-    V2K["precompute_and_store_context_kv<br/>写 draft context KV"]
-    V2M["_generate_draft<br/>draft forward + Markov sampling"]
-    V2O["draft_tokens"]
-    V2R --> V2A --> V2U --> V2I --> V2K --> V2M --> V2O
-  end
+  V1H --> V1A --> V1B --> V1C --> V1D
+  V2H --> V2A --> V2B --> V2C --> V2D
 
-  SH1["共享：Scheduler / Runner 先完成 target forward、验证与状态更新"]
-  SH2["共享：target hidden states → draft context KV → parallel query block → Markov Head"]
-  SH1 -.-> V1R
-  SH1 -.-> V2R
-  V1M -.-> SH2
-  V2M -.-> SH2
+  classDef heading fill:#30363d,stroke:#8b949e,color:#f0f6fc,font-weight:bold;
+  class V1H,V2H heading;
 ```
 
-这张图里最重要的分叉不是类名，而是 `prepare_dflash_inputs` 及其周边状态由谁组织：
+两条调用链的主要差异，在于 `prepare_dflash_inputs` 及其相关状态由谁组织：
 
 - V1：`NPUModelRunner` 先筛 target tensors，`AscendDSparkProposer` 再自己维护 per-group block/slot buffer、改写 common attention metadata、调用 NPU 输入展开 kernel。
 - MRV2：Runner 把统一的 `InputBatch`、`BlockTables`、target attention 结果和 hidden states 交给 speculator；upstream `DSparkSpeculator` 负责 DSpark 输入展开、draft metadata、context KV 与采样算法；Ascend 子类只包住 NPU metadata builder 和图执行差异。
 
 两边的时间关系相同：本轮 target forward 验证上一轮 draft；target sampling 和 bookkeeping 完成后，才为下一轮生成新的 draft。
 
-## 二、V1：Proposer 是一座“自带脚手架的小 Runner”
+## 二、V1：Proposer 同时负责输入和状态组织
 
 V1 的入口在 `NPUModelRunner.propose_draft_token_ids()`。Runner 负责先做这些事：
 
@@ -90,7 +72,7 @@ vllm_ascend/worker/model_runner_v1.py
     → AscendDSparkProposer._propose()
 ```
 
-但 V1 Runner 没有 MRV2 的统一 `BlockTables` speculator scaffold。为了让 DSpark 的多个 draft attention layer 正确落到各自 KV cache group，`AscendDSparkProposer` 自己保存了：
+V1 Runner 没有 MRV2 中统一的 `BlockTables` speculator scaffold。为了让 DSpark 的多个 draft attention layer 正确访问各自的 KV cache group，`AscendDSparkProposer` 保存了以下状态：
 
 ```text
 _per_group_block_tables
@@ -101,7 +83,7 @@ _context_slot_mapping_buffers
 _layer_group_idx
 ```
 
-这些 block table 并不是 Proposer 分配的。Runner 在构造每个 KV cache group 的 target attention metadata 时，通过 `set_per_group_attn_metadata()` 把各 group 的 block table 和 slot mapping 引用交给 Proposer。Proposer 随后用自己的 buffer 为 DSpark 重新生成 context/query slot mapping。
+block table 仍由 Runner 侧分配。Runner 在构造每个 KV cache group 的 target attention metadata 时，通过 `set_per_group_attn_metadata()` 将各 group 的 block table 和 slot mapping 引用交给 Proposer。Proposer 随后使用自己的 buffer，为 DSpark 重新生成 context/query slot mapping。
 
 `AscendDSparkProposer.set_inputs_first_pass()` 是 V1 的输入编排中心。它对每个 draft KV group 调用 Ascend Triton kernel，一次生成：
 
@@ -126,11 +108,11 @@ causal
 attn_state
 ```
 
-也就是说，V1 Proposer 不只是“调用 draft model”。它在 proposal 阶段临时承担了一部分 Runner/attention-input builder 的职责。
+因此，V1 Proposer 除了调用 draft model，还在 proposal 阶段承担了部分 Runner 和 attention-input builder 的工作。
 
 完成输入准备后，V1 先执行 `precompute_and_store_context_kv()`：把 target hidden states 投影并写入 draft model 自己的 KV cache。然后只做一次 draft backbone forward，再用 Markov Head 从左到右生成 $K$ 个 token。返回值才是 `draft_token_ids`。
 
-## 三、MRV2：Speculator 接口背后是一次职责重分配
+## 三、MRV2：通用逻辑进入 upstream Speculator
 
 MRV2 初始化时，上游 `GPUModelRunner` 创建 speculator：
 
@@ -151,7 +133,7 @@ target InputBuffers
 target attention groups
 ```
 
-这一步是架构差异的核心。MRV2 speculator 不再像 V1 那样收集十来个散落的 per-group 字典，而是直接复用 Runner 拥有的 `BlockTables` scaffold。它仍会创建 DSpark 专用的 context slot buffer，但 block table 的更新、gather 和生命周期属于 Runner。
+MRV2 speculator 直接复用 Runner 持有的 `BlockTables` scaffold，省去了 V1 中分散的 per-group 字典。DSpark 专用的 context slot buffer 仍由 speculator 创建，block table 的更新、gather 和生命周期则由 Runner 管理。
 
 steady-state proposal 从 upstream `GPUModelRunner.sample_tokens()` 发起。Runner 完成 target sampling 和 `postprocess_sampled()` 后，调用：
 
@@ -168,7 +150,7 @@ draft_tokens = self.speculator.propose(
 )
 ```
 
-Ascend 的 `AscendDSparkSpeculator.propose()` 只做两件与平台有关的事：记住 `input_batch`，并在 `build_attn_metadata_wrapper()` 环境中调用 `super().propose()`。真正的 DSpark 主流程仍在 upstream：
+Ascend 的 `AscendDSparkSpeculator.propose()` 处理两项平台相关工作：保存 `input_batch`，并在 `build_attn_metadata_wrapper()` 环境中调用 `super().propose()`。DSpark 主流程由 upstream 实现：
 
 1. 合并 target aux hidden states；
 2. 对每个 draft KV group 调用 `prepare_dflash_inputs()`；
@@ -180,15 +162,15 @@ Ascend 的 `AscendDSparkSpeculator.propose()` 只做两件与平台有关的事�
 8. `_sample_sequential()` 用 Markov bias 逐 token 采样；
 9. 返回 `draft_tokens[:num_reqs]`。
 
-Ascend adapter 覆盖的是 NPU 必需的接缝：
+Ascend adapter 处理 NPU 相关的适配点：
 
 - 将 context slot mapping 转为 NPU 路径需要的 `int32`；
 - 收集 Ascend attention backend；
 - 用 `build_attn_metadata_wrapper()` 构造 NPU attention metadata；
-- 给 Ascend graph manager 补回 speculator 与 update stream；
+- 为 Ascend graph manager 配置 speculator 与 update stream；
 - 在 proposal 外围建立正确的 Ascend metadata-builder 上下文。
 
-因此，upstream 与 Ascend adapter 的边界可以概括为：**DSpark 的输入算法、context KV 预写、draft attention 组织、draft forward、Markov sampling 和返回 token 的主流程来自 upstream；NPU attention metadata 的具体构造上下文、dtype、backend 与图执行接缝属于 Ascend adapter。**
+由此可以划分 upstream 与 Ascend adapter 的边界：**upstream 负责 DSpark 的输入算法、context KV 预写、draft attention 组织、draft forward、Markov sampling 和 token 返回；Ascend adapter 负责 NPU attention metadata 的构造上下文、dtype、backend 和图执行适配。**
 
 ## 四、状态归属表：创建、维护、消费要分开看
 
@@ -196,14 +178,14 @@ Ascend adapter 覆盖的是 NPU 必需的接缝：
 
 | 状态 | V1：创建 / 更新 / 消费 | MRV2：创建 / 更新 / 消费 |
 |---|---|---|
-| `positions` | Runner 创建 target position buffer并更新 target positions；`AscendDSparkProposer` 另建 draft `positions` buffer，输入展开 kernel 每轮更新；draft model/attention 消费 | Runner 的 `InputBuffers` 创建 target positions；upstream speculator 自带 draft `InputBuffers`，`prepare_dflash_inputs()` 更新 draft positions；draft model 消费。Ascend 不重新定义其算法 |
-| block table | Scheduler/KV manager 分配 block IDs，V1 Runner 持有并逐轮更新；Runner 把各 group tensor 引用传给 Proposer；输入展开和 attention builder 消费 | upstream Runner 创建并拥有统一 `BlockTables`，根据 SchedulerOutput 追加/更新 block IDs；通过 `set_attn()` 注入 speculator；target 与 draft 输入准备共同读取相应 group |
-| slot mapping | V1 Runner 为 target 构造；Proposer 自建 per-group context/query buffers，Ascend kernel 根据 block table 每轮重算；target/draft attention 与 context-KV precompute 分别消费 | `BlockTables` 创建共享 slot-mapping buffers；target `prepare_attn()` 与 upstream `prepare_dflash_inputs()` 分别写入本轮 target/draft 区域；`build_slot_mappings_by_layer()` 和各 attention layer 消费。Ascend 把 draft context slots 转为 `int32` |
-| attention metadata | V1 Runner/Ascend builder 创建 target common/group metadata；Proposer复制并改写 DSpark query 长度、seq len、slot、causal 等字段，再由 Ascend backend 消费 | upstream Runner 创建 target metadata；upstream speculator根据 draft query shape 调 `_build_draft_attn_metadata()`；Ascend wrapper选择 NPU builder，NPU attention backend消费 |
-| target hidden states | target model 创建，V1 Runner 按有效 token 索引并拼接 aux states；Proposer合并/拷贝，draft model 的 context-KV precompute 消费 | target model 创建，upstream Runner保存于 `ExecuteModelState` 并传给 speculator；upstream speculator合并 aux states、拷入自身 buffer，context-KV precompute 消费；Ascend adapter透传 |
-| draft KV | V1 Runner 在全局 KV cache 初始化阶段分配 draft layer 的物理 cache；Proposer根据 target hidden states 与 context slot mapping 写入，draft attention继续写/读 query KV | upstream Runner统一初始化所有 target/draft layer 的物理 KV cache；upstream speculator选择 draft groups和slots并预写context KV；draft attention读写draft layer cache。Ascend backend执行具体 NPU cache op |
+| `positions` | Runner 创建并填充 target position buffer；`AscendDflashProposer.__init__()` 创建 draft `positions`，`AscendDSparkProposer.set_inputs_first_pass()` 调输入展开 kernel 更新；draft model/attention 消费 | `InputBuffers.__init__()` 创建 target/draft buffer；`prepare_pos_seq_lens()` 更新 target positions，`prepare_dflash_inputs()` 更新 draft positions；RoPE、`BlockTables.compute_slot_mappings()` 和 draft model 消费 |
+| block table | Scheduler/KV manager 分配 block IDs，V1 Runner 持有并逐轮更新；`set_per_group_attn_metadata()` 把各 group tensor 引用传给 Proposer；输入展开和 metadata builder 消费 | `BlockTables.__init__()` 创建持久表；`append_block_ids()`、`apply_staged_writes()` 更新，`gather_block_tables()` 收集当前 batch；`compute_slot_mappings()`、`model_state.prepare_attn()` 和 `prepare_dflash_inputs()` 消费 |
+| slot mapping | V1 Runner 为 target 构造；`AscendDflashProposer.__init__()` 创建 draft context/query buffers，`set_inputs_first_pass()` 内的 Ascend kernel 每轮重算；cache op、draft attention 与 `precompute_and_store_context_kv()` 消费 | `BlockTables.__init__()` 创建共享 buffer，`DFlashSpeculator.set_attn()` 创建 draft context buffer；`compute_slot_mappings()` 生成 target slots，`prepare_dflash_inputs()` 生成 draft slots；`build_slot_mappings_by_layer()`、KV update 和 Attention 消费。Ascend V2 覆盖 `compute_slot_mappings()`，输出 `int32` |
+| attention metadata | V1 Runner 创建 `CommonAttentionMetadata`；Proposer 在 `set_inputs_first_pass()` 中改写 query length、seq lens、slot、causal 等字段；`AscendAttentionMetadataBuilder.build()` 生成 backend metadata并交给 Ascend Attention | `model_state.prepare_attn()` 创建 target metadata，speculator 的 `_build_draft_attn_metadata()` 创建 draft metadata；`set_forward_context()` 保存，`get_attention_context()` 和各 Attention backend 消费 |
+| target hidden states | target model forward 创建；V1 `NPUModelRunner.propose_draft_token_ids()` 按有效 token 索引并拼接 aux states，Proposer 合并/拷贝；`precompute_and_store_context_kv()` 消费 | target model forward 创建，Runner 保存于 `ExecuteModelState`；`DSparkSpeculator.propose()` 合并 aux states并复制到 speculator buffer；`precompute_and_store_context_kv()` 消费，Ascend adapter 透传 |
+| draft KV | KV cache 初始化阶段按 draft layer/group 分配；`precompute_and_store_context_kv()` 按 context slots 写入，draft model forward 按 query slots 继续写入；`AscendDSparkProposer._propose()` 驱动的 draft Attention 读取 | Runner 的统一 KV cache 初始化为 draft groups 分配；`DFlashSpeculator.set_attn()` 建立 layer/group 对应，`precompute_and_store_context_kv()` 写 context KV，`_generate_draft()` 中的 Attention 写 query KV；`DSparkSpeculator.propose()` 驱动读取 |
 
-### 一个必须避免的误解：共享 block table 不等于共享物理 KV
+### 共享 block table 与共享物理 KV 是两回事
 
 对同一请求、同一逻辑 token，target layer 与 draft layer可以使用同一套请求级 block 编号组织方式；但物理 KV tensor 仍按 layer/cache group 分开分配。slot mapping 解决的是“这个逻辑位置落到哪个物理 slot”，attention layer 再用自己的 KV tensor解释该 slot。
 
@@ -215,15 +197,15 @@ Ascend adapter 覆盖的是 NPU 必需的接缝：
         └─ draft layer 的 physical KV tensor
 ```
 
-它们可以共享寻址规则，却不是共享 K/V 内容。DSpark 的 context KV 正是由 target hidden states重新投影后写进 draft layer cache，而不是直接拿 target layer 的 K/V 来用。
+两类 KV 可以使用相同的寻址规则，但 K/V 内容相互独立。DSpark 会对 target hidden states 重新投影，再将结果写入 draft layer cache，不会直接复用 target layer 的 K/V。
 
-## 五、同一次 DSpark decode，两边到底是谁组织什么？
+## 五、两套实现的职责对照
 
-把职责压缩成一句话：
+两套实现的职责可以概括为：
 
 ```text
-V1   = Runner 筛 target 输入 + Ascend Proposer 自己搭 draft 执行脚手架
-MRV2 = Runner 提供统一状态骨架 + upstream Speculator 完成 DSpark + Ascend 适配 NPU 接缝
+V1   = Runner 筛选 target 输入 + Ascend Proposer 组织 draft 执行状态
+MRV2 = Runner 提供统一状态 + upstream Speculator 执行 DSpark + Ascend 适配 NPU
 ```
 
 更细一点：
@@ -239,17 +221,15 @@ MRV2 = Runner 提供统一状态骨架 + upstream Speculator 完成 DSpark + Asc
 | context KV precompute | Ascend Proposer驱动 draft model | upstream speculator驱动 draft model |
 | draft forward与Markov采样 | Ascend proposer/model实现 | upstream `DSparkSpeculator` 实现；Ascend只适配执行环境 |
 
-## 六、需要澄清的架构误解与待验证边界
+## 六、架构变化与待验证边界
 
-### 不只是接口改名
+### 从接口变化看状态边界调整
 
-一种容易产生的误解是：MRV2 只是把 V1 的 `AscendDSparkProposer` 换成 `AscendDSparkSpeculator`，其余变化仅是接口改名。源码中的状态归属与调用关系并不支持这一判断。
-
-真正变化的是状态边界：V1 Proposer 内部有一套近似 mini-runner 的 per-group block/slot/metadata bookkeeping；MRV2 把这套通用基础设施放进 upstream Runner、`BlockTables` 和 upstream DFlash/DSpark Speculator，Ascend 子类只留下平台接缝。类名变化只是表面，**orchestration 上移 upstream 才是本质**。
+`AscendDSparkProposer` 到 `AscendDSparkSpeculator` 的变化同时调整了状态边界。V1 Proposer 内部维护了一套近似 mini-runner 的 per-group block/slot/metadata bookkeeping；MRV2 将这些通用能力放入 upstream Runner、`BlockTables` 和 upstream DFlash/DSpark Speculator，Ascend 子类保留平台适配。对应到执行流程上，DSpark orchestration 已经移至 upstream。
 
 ### 尚待运行时验证的边界
 
-从 Python 控制流可以确认“logical block → slot”的计算方式和 ownership，但仅靠静态分析还不足以确认一个真实 token 在各层中的具体地址映射。完整验证需要逐层记录以下数值：
+Python 控制流能够说明“logical block → slot”的计算方式和 ownership。要确认真实 token 在各层中的具体地址映射，还需要在运行时逐层记录以下数值：
 
 ```text
 logical token position
@@ -259,7 +239,7 @@ logical token position
   → 某个 target/draft layer 的 physical KV tensor 地址
 ```
 
-尤其需要继续确认：混合 KV cache group、不同 kernel block size、DSpark 多 draft group 时，target metadata 与 draft metadata到底共享哪些布局约束，哪些只是在相同 `BlockTables` 外壳下分别构造。这不是仅靠“两个对象都叫 slot mapping”就能下结论的。
+还需要覆盖混合 KV cache group、不同 kernel block size、DSpark 多 draft group 等配置，确认 target metadata 与 draft metadata 共享哪些布局约束，以及两者在同一 `BlockTables` 中分别构造的部分。名称相同的 slot mapping，底层布局未必相同。
 
 ## 七、三个核心问题的答案
 
@@ -296,7 +276,7 @@ Ascend adapter 负责 NPU 落地：Ascend attention metadata builder 上下文�
 
 ### ③ 两边第一次出现不同 token，按什么顺序向前比？
 
-先固定同一个请求、同一个 draft step、同一个采样模式和 seed，然后按离输出从近到远的顺序：
+先固定请求、draft step、采样模式和 seed，再从输出向前逐层比较：
 
 ```text
 draft_token_ids
@@ -315,7 +295,7 @@ draft_token_ids
 2. `markov_bias(previous_token)`；
 3. 两者相加后的最终 logits，以及 argmax/Gumbel sampler 输入。
 
-若最终 logits 已不同，就不要先怀疑 rejection sampler；继续向前比较 head hidden。若 head hidden 第一次不同，再比较 DSpark inputs。若 inputs相同而 hidden 不同，优先检查 target hidden states、attention metadata与draft KV。这个顺序能把采样差异、模型输入差异和寻址差异分开。
+如果最终 logits 已经不同，可以继续向前比较 head hidden，无需先排查 rejection sampler。head hidden 首次出现差异时，再比较 DSpark inputs；inputs 相同而 hidden 不同时，重点检查 target hidden states、attention metadata 与 draft KV。按照这个顺序，可以逐步区分采样、模型输入和寻址带来的差异。
 
 ## 八、后续验证方案
 
@@ -325,7 +305,7 @@ draft_token_ids
 
 > 一个 token 在 V1 / MRV2 中究竟如何通过 `block table → slot mapping → physical KV` 找到自己的 KV Cache？DSpark draft KV 与 target KV 的 metadata 是同一种组织规则、不同实例，还是在某些 KV group/backend 下连布局规则也不同？
 
-基于当前源码可以确认的是：两者在同一个 Runner/KV cache 配置框架下分别构造。至于具体布局是否完全一致，还需要逐 Tensor、逐地址的运行时证据，不能仅凭静态结构下结论。
+当前源码表明，两者在同一个 Runner/KV cache 配置框架下分别构造。具体布局是否完全一致，还需要通过逐 Tensor、逐地址的运行时数据验证。
 
 ## 源码索引
 
