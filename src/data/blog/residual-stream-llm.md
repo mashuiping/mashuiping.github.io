@@ -23,9 +23,9 @@ for layer in self.layers[start:end]:
     )
 ```
 
-我一开始把 `residual` 理解成"最一开始 embedding 那个东西，然后每层都加它"。代码一跑就发现不对。
+一个常见误解是把 `residual` 理解成“最初的 embedding，并在之后的每一层重复加回”。实际代码中的 `residual` 并不是一个始终不变的初始值。
 
-本文记录一下到底发生了什么。
+下面结合执行过程说明它在层间如何传递和更新。
 
 ---
 
