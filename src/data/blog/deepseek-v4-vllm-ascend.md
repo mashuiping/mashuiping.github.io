@@ -1,8 +1,8 @@
 ---
-title: DeepSeek V4 在 vLLM Ascend 里怎么跑：从 mHC 到三类 KV Cache
-description: 沿一次 token forward 追踪 DeepSeek V4 在 vLLM Ascend 中的执行路径，解释 mHC 多流残差、DSA 稀疏注意力、Indexer、Compressor 与 SWA Cache 如何接到一起。
+title: DeepSeek V4 在 vLLM Ascend 中的推理链路：mHC、DSA 与三类 KV Cache
+description: 沿一次 token forward 追踪 DeepSeek V4 在 vLLM Ascend 中的执行路径，分析 mHC 多流残差、DSA 稀疏注意力以及三类 KV Cache 的串联方式。
 pubDate: 2026-08-20
-updatedDate: 2026-08-20
+updatedDate: 2026-08-25
 category: ai-infra
 tags:
   - DeepSeek V4
@@ -13,21 +13,21 @@ tags:
 draft: false
 ---
 
-DeepSeek V4 接进 vLLM Ascend 后，模型主干里有两处很容易把人看晕。
+DeepSeek V4 接入 vLLM Ascend 后，模型主干出现了两项区别于常规 Transformer 的实现。
 
-第一处是 hidden states 的形状。embedding 输出原本是 `[T, H]`，进模型后却变成 `[T, C, H]`；到了 Attention 和 MoE 前，又被压回 `[T, H]`。第二处是 KV Cache。一次 Attention 不只拿一块 cache，而是同时碰到 Compressor、Indexer 和 SWA 几组状态。
+第一项是 hidden states 的形状变化：embedding 输出为 `[T, H]`，进入模型后扩展为 `[T, C, H]`，在 Attention 和 MoE 前恢复到 `[T, H]`。第二项是 KV Cache 的组织方式：一次 Attention 会同时访问 Compressor、Indexer 和 SWA 对应的多组状态。
 
-这篇文章不按文件目录介绍代码，而是跟着一次 forward 往下走。读完至少能回答三个问题：
+本文沿一次 token forward 分析三个部分：
 
-- mHC 为什么要在多流和单流之间来回切换；
-- DSA 为什么需要 Indexer、Compressor 和 SWA 三套状态；
-- Python 模型层、vLLM Attention 接口和 Ascend 后端各自负责什么。
+- mHC 在多流主干和单流子层之间的形状转换；
+- Indexer、Compressor 和 SWA 三类状态在 DSA 中的作用；
+- Python 模型层、vLLM Attention 接口和 Ascend 后端的职责边界。
 
 代码基于 vLLM Ascend `main @ b4b04c5eb`。本文只讨论当前仓库里的推理路径，不展开训练、反向传播和算子内部实现。
 
-## 一、先看完整路径
+## 一、整体执行链路
 
-设这次 forward 有 `T` 个 token，hidden size 为 `H`，`hc_mult=C`。主干可以先压成下面这张图：
+设一次 forward 包含 `T` 个 token，hidden size 为 `H`，`hc_mult=C`。模型主干的数据流如下：
 
 ```text
 input_ids [T]
@@ -55,7 +55,7 @@ embedding [T, H]
 
 入口是 `AscendDeepseekV4ForCausalLM.forward`。它只调用 `self.model(...)` 并返回 hidden states；logits 由单独的 `compute_logits` 计算。因此，调试时停在模型 `forward` 的返回位置，看不到 logits 是正常的。
 
-真正改变形状的是 `DeepseekV4Model.forward`：
+hidden states 的形状转换发生在 `DeepseekV4Model.forward`：
 
 ```python
 if get_pp_group().is_first_rank:
@@ -80,7 +80,7 @@ hidden_states = self.hc_head(
 )
 ```
 
-这里建立了整篇文章的主线：层与层之间传递 `[T, C, H]` 多流残差；Attention 和 MoE 仍处理 `[T, H]` 单流表示；`hc_pre` 和 `hc_post` 负责两种形状之间的映射。
+层与层之间传递 `[T, C, H]` 多流残差，Attention 和 MoE 处理 `[T, H]` 单流表示，`hc_pre` 和 `hc_post` 负责两种形状之间的映射。
 
 ## 二、mHC：主干是多流，子层仍是单流
 
@@ -90,7 +90,7 @@ $$
 x_{l+1}=x_l+F(x_l)
 $$
 
-在当前实现里，mHC 把主干扩成 `C` 条流，层间状态形状为 `[T, C, H]`。但这不意味着 Attention 和 MoE 都要改写成多流算子。代码选择在每个子层前后做映射：
+在当前实现里，mHC 把主干扩成 `C` 条流，层间状态形状为 `[T, C, H]`。为复用单流 Attention 和 MoE，代码在每个子层前后增加形状映射：
 
 ```text
 多流 residual ──┬── hc_pre ──► 单流 x ──► Attention / MoE ──┐
@@ -101,7 +101,7 @@ $$
                               新的多流 residual
 ```
 
-### `hc_pre` 做了什么
+### `hc_pre`：多流聚合为单流
 
 `DeepseekV2DecoderLayer.__init__` 根据 `hc_mult` 建立 Attention 和 FFN 各自的 mHC 参数：
 
@@ -119,7 +119,7 @@ self.hc_attn_base = nn.Parameter(
 self.hc_attn_scale = nn.Parameter(torch.empty(3, dtype=torch.float32))
 ```
 
-当 `C=4` 时，`mix_hc=(2+4)×4=24`。可以把这 24 个值理解成三组映射参数：
+当 `C=4` 时，`mix_hc=(2+4)×4=24`。这 24 个值对应三组映射参数：
 
 | 映射 | 数量 | 作用 |
 |---|---:|---|
@@ -142,9 +142,9 @@ hidden_states, post, comb = torch.ops._C_ascend.npu_hc_pre_v2(
 )
 ```
 
-Python 侧没有逐步展开 sigmoid 或 Sinkhorn，而是把参数和配置交给 NPU 自定义算子。读这段代码时，能确认的是输入输出关系和算子边界；算子内部的数值过程还要结合 CANN 实现验证。
+Python 侧将 sigmoid、Sinkhorn 所需的参数和配置交给 NPU 自定义算子。当前代码可以确认输入输出关系与算子边界；内部数值过程还需要结合 CANN 实现验证。
 
-### `hc_post` 如何写回多流
+### `hc_post`：子层输出写回多流
 
 子层算完得到 `[T, H]`，`hc_post` 同时接收三样东西：子层输出、进入子层前保存的多流 residual、`hc_pre` 生成的 `post/comb`。
 
@@ -157,7 +157,7 @@ hidden_states = torch.ops._C_ascend.npu_hc_post(
 ).squeeze(0)
 ```
 
-所以 `post` 和 `comb` 不是两个串行步骤。更准确的理解是：`post` 决定这次子层结果怎么写回，`comb` 决定旧的多流 residual 怎么重新混合，两部分共同生成下一份 `[T, C, H]` 状态。
+`post` 决定子层结果如何写回，`comb` 决定原有多流 residual 如何重新混合，两部分共同生成下一份 `[T, C, H]` 状态。
 
 ### 一层里会走两遍 mHC
 
@@ -186,7 +186,7 @@ hidden_states = self.hc_post(hidden_states, residual, post, comb)
 
 因此每层各调用两次 `hc_pre` 和 `hc_post`。所有层结束后，`hc_head` 再把 `[T, C, H]` 收回 `[T, H]`，交给最终 RMSNorm 和 LM Head。
 
-## 三、DSA：稀疏选择不只是一条 top-k
+## 三、DSA 的调用边界与状态组成
 
 从 Decoder Layer 进入 `self.self_attn` 后，形状已经回到 `[T, H]`。`DeepseekV4Attention` 会把 DSA 所需模块打包成 `DSAModules`，交给 `AscendDeepseekSparseAttention`：
 
@@ -222,9 +222,9 @@ self.dsa_attn.impl.forward(
 )
 ```
 
-这层封装有两个作用：一是沿用 vLLM 的 Attention 调度和 cache 管理；二是让完整 DSA 路径进入可供 ACL Graph 捕获的自定义 op 边界。
+这层封装沿用 vLLM 的 Attention 调度和 cache 管理，同时将完整 DSA 路径纳入 ACL Graph 可捕获的自定义 op 边界。
 
-### 为什么一次要组装多类 cache
+### DSA backend 使用的多类 cache
 
 `_build_kv_cache` 是理解 DSA 数据面的关键。非 A5 设备最终传给 backend 的是一个 6 元组；A5 还会增加 `indexer_full_cache`：
 
@@ -238,13 +238,13 @@ self.dsa_attn.impl.forward(
 | 6 | `indexer_scale_cache` | Indexer K 的量化 scale | top-k 打分/反量化 |
 | 7（A5） | `indexer_full_cache` | A5 路径额外展开的 Indexer cache | A5 backend |
 
-这里最值得记住的是：Indexer 也需要 cache。它要在当前 query 和历史 token 之间重新打分；历史 K 如果不保留，下一次 decode 就没有候选集合可算。
+Indexer 也需要持久 cache。它要对当前 query 和历史 token 重新打分；保留历史 K 后，下一次 decode 才能构造候选集合。
 
-## 四、Indexer、Compressor、SWA 各管一件事
+## 四、Indexer、Compressor 与 SWA 的职责划分
 
-把三者都叫“稀疏 Attention 的 cache”容易混。按职责拆开会清楚很多。
+三类状态分别对应候选选择、历史压缩和近期窗口。
 
-### Indexer：回答“看哪些历史 token”
+### Indexer：选择历史 token
 
 `Indexer` 里有 query 投影 `wq_b`、打分权重投影 `weights_proj`、Indexer K Cache，以及可选的 Compressor：
 
@@ -269,11 +269,11 @@ k_dtype = (
 
 当前实现里，A5 的 Indexer K 使用 `float8_e4m3fn`，其他设备走 `int8`。`AscendDeepseekV4IndexerCache.get_kv_cache_spec` 负责把 cache 的 block size、head size、dtype、压缩比例和 scale 信息注册给 vLLM 的 KV Cache 管理层。
 
-一次 decode 可以粗略看成两步：先用当前 query 和历史 Indexer K 计算分数，再选出 `index_topk` 个位置供稀疏 Attention 使用。top-k 结果是当前 step 的中间数据，历史 K 则跨 step 留在 cache 中。
+一次 decode 先使用当前 query 和历史 Indexer K 计算分数，再选出 `index_topk` 个位置供稀疏 Attention 使用。top-k 结果只属于当前 step，历史 K 则跨 step 保存在 cache 中。
 
-### Compressor：回答“历史 KV 怎么存”
+### Compressor：压缩历史 KV
 
-Indexer 决定选谁，Compressor 负责降低保存历史状态的代价。当前 `Compressor` 支持的 `compress_ratio` 是 `4` 和 `128`；其他值会直接抛出 `ValueError`。
+Indexer 负责选择位置，Compressor 用于降低历史状态的存储开销。当前 `Compressor` 支持的 `compress_ratio` 为 `4` 和 `128`；其他值会直接抛出 `ValueError`。
 
 它包含 `wkv`、`wgate`、可学习参数 `ape` 和 `state_cache`。当 `compress_ratio == 4` 时还会打开 overlap 布局：
 
@@ -289,17 +289,17 @@ self.ape = nn.Parameter(
 )
 ```
 
-仓库里还能看到 Hadamard 参考实现：输入先补到 2 的幂维度，乘 Hadamard 矩阵，缩放后再裁回原维度。这里的旋转和压缩要分开看：正交旋转本身负责重新分布数值，真正的有损来源还包括后续压缩与量化。没有端到端测量时，不应仅凭这段参考代码推断具体精度或吞吐收益。
+仓库中还提供了 Hadamard 参考实现：输入先补到 2 的幂维度，乘 Hadamard 矩阵，缩放后再裁回原维度。正交旋转负责重新分布数值，有损过程还包括后续压缩与量化。缺少端到端测量时，无法根据这段参考代码判断具体的精度或吞吐收益。
 
 `dsa_v1.py` 还创建了独立的 NPU stream，用来重叠部分 Hadamard 计算和 KV 搬运。这是执行层优化，不改变上面的 cache 语义。
 
-### SWA：保证近期窗口仍可访问
+### SWA：保留近期窗口
 
-top-k 按分数选历史位置，并不等价于“最近的 token 一定入选”。SWA 单独保存近期窗口，使 backend 能把滑动窗口位置和稀疏索引一起纳入 Attention。
+top-k 按分数选择历史位置，无法保证近期 token 入选。SWA 单独保存近期窗口，使 backend 能把滑动窗口位置和稀疏索引一起纳入 Attention。
 
 Ascend 侧用 `AscendDeepseekV4SWACache` 注册这块 cache，底层 spec 是 `AscendSlidingWindowMLASpec`。它在上游 `SlidingWindowMLASpec` 之外带有 Ascend 所需的 dtype、模型版本、对齐和页面 padding 信息。
 
-因此，DSA 的选择集合更适合写成：
+DSA 的可访问集合可以表示为：
 
 ```text
 当前 query 可访问的位置
@@ -309,20 +309,20 @@ Ascend 侧用 `AscendDeepseekV4SWACache` 注册这块 cache，底层 spec 是 `A
 
 实际 backend 还要处理重复位置、block 对齐、不同请求的长度和 metadata，不能简单把两边的数量直接相加。
 
-## 五、SFA 和 DSA 两套 backend 怎么理解
+## 五、SFA 与 DSA backend 的选择
 
 仓库里同时存在 `attention/sfa_v1.py` 和 `attention/dsa_v1.py`。两者都服务 DeepSeek V4 稀疏 Attention，但执行组织和适用路径不同。
 
 - `AscendSFAImpl` 继承 `MLAAttentionImpl`，包含 Indexer 选择、稀疏 Flash Attention、KV offload 等路径。
 - `AscendDSAImpl` 继承 `AttentionImplBase`，包含 Compressor、SWA metadata、DSpark/MTP 相关处理以及多 stream 流程。
 
-模型层不应该直接假定最终走哪个文件。它通过 `DSAAttention`、backend 选择和 `ForwardContext` 把实现留给运行时配置。调试某次请求时，先看实际注册的 backend 和 `self.dsa_attn.impl` 类型，比只看类名更可靠。
+模型层通过 `DSAAttention`、backend 选择和 `ForwardContext` 将具体实现交给运行时配置。调试请求时，应检查实际注册的 backend 和 `self.dsa_attn.impl` 类型。
 
-KV offload 也是同样的道理。`sfa_v1.py` 只在 `sparse_kv_offload_config.enabled` 时加载对应 metadata builder 和 impl。它是可选运行路径，不是所有 DeepSeek V4 请求都会发生的固定步骤。
+`sfa_v1.py` 仅在 `sparse_kv_offload_config.enabled` 时加载 KV offload 对应的 metadata builder 和 impl，因此 KV offload 属于可选路径。
 
-## 六、从一个 token 再走一遍
+## 六、单 Token 执行示例
 
-用 `T=1`、`C=4` 收尾，把控制流和数据流放到同一张表里：
+取 `T=1`、`C=4`，一次 forward 的控制流和数据流如下：
 
 | 阶段 | 主要对象 | 输入 → 输出 | 状态变化 |
 |---|---|---|---|
@@ -335,11 +335,11 @@ KV offload 也是同样的道理。`sfa_v1.py` 只在 `sparse_kv_offload_config.
 | 模型尾部 | `hc_head` | `[1,4,H] → [1,H]` | 多流收回单流 |
 | 输出头 | `compute_logits` | `[1,H] → [1,V]` | 生成 logits |
 
-还有一个容易忽略的边界：`DeepseekV4Model.forward` 会在 `hc_head` 之前把展平的多流状态写入 `_mtp_hidden_buffer`。MTP draft model 需要的是 pre-`hc_head` 状态，而主模型输出拿到的是收流并 Norm 之后的 hidden states。开了 FlashComm1 时，代码还会先做 tensor-parallel all-gather，再去掉 padding 后写 buffer。
+`DeepseekV4Model.forward` 会在 `hc_head` 之前把展平的多流状态写入 `_mtp_hidden_buffer`。MTP draft model 使用 pre-`hc_head` 状态，主模型输出则是收流并 Norm 后的 hidden states。启用 FlashComm1 时，代码先执行 tensor-parallel all-gather，再移除 padding 并写入 buffer。
 
-## 七、读代码时从哪里下断点
+## 七、源码定位与调试入口
 
-如果要继续跟当前实现，建议按调用顺序看这些位置：
+继续跟踪当前实现时，可以按调用顺序检查以下位置：
 
 1. `vllm_ascend/models/deepseek_v4.py`
    - `DeepseekV4Model.forward`
@@ -359,4 +359,6 @@ KV offload 也是同样的道理。`sfa_v1.py` 只在 `sparse_kv_offload_config.
 5. `vllm_ascend/core/kv_cache_interface.py`
    - `AscendSlidingWindowMLASpec`
 
-整条链路可以归成一句朴素的话：mHC 管层与层之间的表示怎么流动，DSA 管当前 query 看哪些历史位置，Compressor、Indexer Cache 和 SWA Cache 分别保存执行这次选择所需的不同状态。把这三层职责分开后，DeepSeek V4 的代码就不再是一团特殊算子，而是一条边界清楚的推理流水线。
+## 八、总结
+
+mHC 管理层间表示：主干保留 `[T, C, H]` 多流 residual，Attention 和 MoE 在 `[T, H]` 单流上执行。DSA 根据 Indexer 结果与 SWA 窗口确定当前 query 可访问的历史位置，Compressor、Indexer Cache 和 SWA Cache 保存各自所需的跨 step 状态。模型层负责组织模块和张量，vLLM Attention 接口提供调度与 cache 管理，Ascend backend 完成设备侧执行。
