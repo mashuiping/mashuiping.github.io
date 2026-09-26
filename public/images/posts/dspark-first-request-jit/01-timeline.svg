@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="520" viewBox="0 0 1200 520" role="img" aria-labelledby="title desc">
+  <title id="title">冷缓存首请求的两段式卡顿</title>
+  <desc id="desc">关闭预热时，46.68 秒才输出首个流式 token，87.02 秒输出首个正文；完整预热时分别是 0.505 秒和 0.683 秒。</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#0c1527"/><stop offset="1" stop-color="#17283f"/></linearGradient>
+    <linearGradient id="stall"><stop stop-color="#ef6351"/><stop offset="1" stop-color="#f5a55c"/></linearGradient>
+    <linearGradient id="flow"><stop stop-color="#54d2c5"/><stop offset="1" stop-color="#76a9fa"/></linearGradient>
+  </defs>
+  <rect width="1200" height="520" rx="28" fill="url(#bg)"/>
+  <text x="64" y="72" fill="#f5f8ff" font-size="31" font-weight="700" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">第一个请求慢在哪里？</text>
+  <text x="64" y="108" fill="#a9bbd0" font-size="19" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">同一修复代码 · 冷缓存 · 关闭 / 开启 JIT 预热</text>
+  <text x="64" y="174" fill="#d7e2f1" font-size="22" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">关闭预热</text>
+  <rect x="236" y="143" width="440" height="58" rx="12" fill="url(#stall)"/>
+  <rect x="676" y="143" width="381" height="58" rx="12" fill="#ef6351" opacity=".62"/>
+  <text x="455" y="180" text-anchor="middle" fill="#142033" font-size="20" font-weight="700" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">首 token 前：JIT + prefill</text>
+  <text x="866" y="180" text-anchor="middle" fill="#fff5ed" font-size="20" font-weight="700" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">流内：decode 继续编译</text>
+  <circle cx="676" cy="172" r="7" fill="#fff"/>
+  <text x="676" y="230" text-anchor="middle" fill="#f7b888" font-size="19" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">46.68s 首 token</text>
+  <text x="1057" y="230" text-anchor="end" fill="#f7b888" font-size="19" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">87.02s 首正文</text>
+  <line x1="64" y1="267" x2="1136" y2="267" stroke="#34465c"/>
+  <text x="64" y="338" fill="#d7e2f1" font-size="22" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">完整预热</text>
+  <rect x="236" y="306" width="821" height="58" rx="12" fill="#28445a"/>
+  <rect x="236" y="306" width="85" height="58" rx="12" fill="url(#flow)"/>
+  <circle cx="321" cy="335" r="7" fill="#fff"/>
+  <text x="348" y="343" fill="#d9f6ee" font-size="21" font-weight="700" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">0.505s 首 token</text>
+  <text x="760" y="343" fill="#d9f6ee" font-size="21" font-weight="700" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">0.683s 首正文</text>
+  <text x="64" y="436" fill="#9eb5cc" font-size="17" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">示意图：上下横条分别按各自行内事件排列，不共用时间比例。</text>
+  <text x="64" y="469" fill="#9eb5cc" font-size="17" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">计时从发起请求开始；首 token 包括 reasoning。</text>
+</svg>

@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="570" viewBox="0 0 1200 570" role="img" aria-labelledby="title desc">
+  <title id="title">DFlash 无用 constexpr 造成缓存 key 碎片化</title>
+  <desc id="desc">不同输入长度可能带来不同 BLOCK_SIZE 编译期参数，形成不同缓存 key，但三份实验产物的 TTIR 和 NPU 二进制相同；删除无用参数后归为一个特化。</desc>
+  <defs><linearGradient id="bg" x2="1" y2="1"><stop stop-color="#101928"/><stop offset="1" stop-color="#22374b"/></linearGradient></defs>
+  <rect width="1200" height="570" rx="28" fill="url(#bg)"/>
+  <text x="64" y="71" fill="#f4f8ff" font-size="31" font-weight="700" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">编译三次，产物却相同</text>
+  <text x="64" y="108" fill="#afc2d5" font-size="19" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">DFlash 输入准备 kernel · 实验缓存产物对比</text>
+  <text x="83" y="172" fill="#abc7de" font-size="19" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">不同请求 / 预热步</text>
+  <text x="430" y="172" fill="#abc7de" font-size="19" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">不同缓存 key</text>
+  <text x="785" y="172" fill="#abc7de" font-size="19" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">相同的 TTIR + NPU 二进制</text>
+  <g font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif" font-size="21" font-weight="600">
+    <rect x="64" y="203" width="270" height="64" rx="13" fill="#2e465f"/><text x="199" y="244" text-anchor="middle" fill="#e6f2ff">预热步 A</text>
+    <rect x="416" y="203" width="245" height="64" rx="13" fill="#895a55"/><text x="538" y="244" text-anchor="middle" fill="#fff1e8">key A</text>
+    <rect x="64" y="284" width="270" height="64" rx="13" fill="#2e465f"/><text x="199" y="325" text-anchor="middle" fill="#e6f2ff">预热步 B</text>
+    <rect x="416" y="284" width="245" height="64" rx="13" fill="#895a55"/><text x="538" y="325" text-anchor="middle" fill="#fff1e8">key B</text>
+    <rect x="64" y="365" width="270" height="64" rx="13" fill="#2e465f"/><text x="199" y="406" text-anchor="middle" fill="#e6f2ff">首个真实请求</text>
+    <rect x="416" y="365" width="245" height="64" rx="13" fill="#895a55"/><text x="538" y="406" text-anchor="middle" fill="#fff1e8">key C</text>
+  </g>
+  <g stroke="#8aa4bc" stroke-width="3"><path d="M340 235h64M340 316h64M340 397h64"/><path d="M668 235h110M668 316h110M668 397h110"/></g>
+  <rect x="786" y="203" width="350" height="226" rx="19" fill="#2a665b" stroke="#58bda4" stroke-width="2"/>
+  <text x="961" y="297" text-anchor="middle" fill="#e1fff4" font-size="30" font-weight="700" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">同一份代码</text>
+  <text x="961" y="341" text-anchor="middle" fill="#c2eddf" font-size="20" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">删除无用 constexpr 后</text>
+  <text x="961" y="373" text-anchor="middle" fill="#c2eddf" font-size="20" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">无需为新长度桶重复编译</text>
+  <text x="64" y="504" fill="#b3c7d7" font-size="18" font-family="-apple-system,BlinkMacSystemFont,'Noto Sans SC',sans-serif">图中 A/B/C 为示意标签；具体 BLOCK_SIZE 桶值未被实验日志记录。</text>
+</svg>
