@@ -12,7 +12,7 @@ tags:
 draft: false
 ---
 
-dspark v1/v2 Model Runner 的对比报告出来了。同一负载，200 个 128→128、concurrency 64、graph 模式，k0 上 v1 是 409 tok/s，v2 是 818 tok/s。报告里有一句话差点就这么写下去：v2 相比 v1 提升 2 倍。v1 是老 runner，v2 是重写版，新版本快一倍，好像很正常。
+最近在做 vllm-ascend dspark v1/v2 Model Runner 的对比报告，报告出来后发现同一负载，200 个 128→128、concurrency 64、graph 模式，k0 上 v1 是 409 tok/s，v2 是 818 tok/s。报告里有一句话差点就这么写下去：v2 相比 v1 提升 2 倍。v1 是老 runner，v2 是重写版，新版本快一倍，好像很正常。
 
 有一个细节对不上。v1 的逐 token 延迟主体和 v2 一样，decode FULL step 大约 52ms。整体慢一倍，单步却一样。慢的不是每一步，是某些时刻突然停住。
 
